@@ -17,14 +17,12 @@ class CrossAttention(nn.Module):
             self.data_length = data_length
             
             # Pre-expand keys for heads: (heads, data_length, embed_size)
-            self.keys = nn.Parameter(
-                offline_keys.view(1, data_length, embed_size).repeat(heads, 1, 1),
-                requires_grad=False
+            self.register_buffer('keys', 
+                offline_keys.view(1, data_length, embed_size).repeat(heads, 1, 1)
             )
             # Pre-expand values for heads: (heads, data_length, 1)
-            self.values = nn.Parameter(
-                offline_values.view(1, data_length, 1).repeat(heads, 1, 1),
-                requires_grad=False
+            self.register_buffer('values',
+                offline_values.view(1, data_length, 1).repeat(heads, 1, 1)
             )
         else:
             raise ValueError("Offline keys and values must be provided")
@@ -59,7 +57,7 @@ class CrossAttention(nn.Module):
         # Values are in shape (h, data_length, 1)
         # Expand values to (b*t, h, data_length, 1) - using expand for memory efficiency
         values = self.values.unsqueeze(0).expand(b*t, -1, -1, -1)
-        
+        ###TODO - implement curiosity score
         if curiosity_score is not None:
             # Reshape curiosity score: (b*t, 1, 1), since its input is (b,t,1)
             curiosity = curiosity_score.view(b*t, 1, 1)

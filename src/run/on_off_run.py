@@ -139,10 +139,12 @@ def run_sequential(args, logger,group_name):
 
     on_buffer = ReplayBuffer(scheme, groups, args.buffer_size, env_info["episode_limit"] + 1,
                           preprocess=preprocess,
-                          device="cpu")
+                          device="cpu",
+                          args=args)
     off_buffer = ReplayBuffer(scheme, groups, args.off_buffer_size, env_info["episode_limit"] + 1,
                           preprocess=preprocess,
-                          device="cpu")
+                          device="cpu",
+                          args=args)
     buffer_for_MT = ReplayBuffer(scheme, groups, args.batch_size_run, env_info["episode_limit"] + 1,
                           preprocess=preprocess,
                           device="cpu" if args.buffer_cpu_only else args.device)
@@ -249,7 +251,8 @@ def run_sequential(args, logger,group_name):
         del on_buffer
         on_buffer = ReplayBuffer(scheme, groups, args.buffer_size, env_info["episode_limit"] + 1,
                           preprocess=preprocess,
-                          device="cpu")
+                          device="cpu",
+                          args=args)
         
         
         n_repeat = 2
