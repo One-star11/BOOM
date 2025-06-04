@@ -220,6 +220,7 @@ def run_sequential(args, logger,group_name):
             
             with th.no_grad() :
                 episode_batch = runner.run(test_mode=False,MT_train_mode=True)
+                #logger.console_logger.info(episode_batch)
                 buffer.insert_episode_batch(episode_batch)
                 del episode_batch
                 
@@ -270,6 +271,7 @@ def run_sequential(args, logger,group_name):
         # Run for a whole episode at a time
         with th.no_grad():
             episode_batch = runner.run(test_mode=False)
+            #logger.console_logger.info(episode_batch)
             buffer.insert_episode_batch(episode_batch)
             buffer_for_MT.insert_episode_batch(episode_batch)
 

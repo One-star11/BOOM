@@ -43,7 +43,7 @@ class QLearner:
         self.train_t = 0
         
     def MT_train(self, batch: EpisodeBatch, t_env: int, episode_num: int, per_weight=None, logger='',write_log=False,lr = 0.0005,batch_size=32,n_repeat=2):
-        
+        #look in to n_rnn_agent.py
         self.mac.agent.mae.train()
         for name,child in self.mac.agent.named_children() :
             if name == 'mae' :

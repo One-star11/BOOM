@@ -11,13 +11,13 @@ function onCtrlC () {
   exit 1
 }
 
-config=$1  # qmix
-env_config=$2
-maps=$3    # MMM2,3s5z_vs_3s6z
-args=$4    # ""
-threads=$5 # 2
-gpus=$6    # 0,1
-times=$7   # 5
+config=qmix  # qmix
+env_config=sc2
+maps=5m_vs_6m  # MMM2,3s5z_vs_3s6z
+args=""    # ""
+threads=1 # 2
+gpus=4    # 0,1
+times=1   # 5
 
 maps=(${maps//,/ })
 gpus=(${gpus//,/ })

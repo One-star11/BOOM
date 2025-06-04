@@ -45,7 +45,7 @@ class Positional_Encoding(nn.Module) :
         return out 
         
         
-
+######결국 여기.
 class Base_Transformer(nn.Module) :
     def __init__(self, obs_dim, action_dim, config,device,positional_type='agent') :
         super().__init__()

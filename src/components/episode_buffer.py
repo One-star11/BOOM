@@ -3,6 +3,11 @@ import numpy as np
 from types import SimpleNamespace as SN
 from .segment_tree import SumSegmentTree, MinSegmentTree
 import random
+from modules.layer.cross_atten import CrossAttention
+import jax
+import jax.numpy as jnp
+import flashbax as fbx
+from flashbax.vault import Vault
 class EpisodeBatch:
     def __init__(self,
                  scheme,
@@ -210,8 +215,22 @@ class ReplayBuffer(EpisodeBatch):
         self.buffer_size = buffer_size  # same as self.batch_size but more explicit
         self.buffer_index = 0
         self.episodes_in_buffer = 0
+        self.heads = 1
+        #TODO : load a pretrained transformer to search relevant episodes from the offline data
+        ###input_shape = full state + action, needs to be changed when using some more.
+        input_shape = scheme["state"]["vshape"] + groups["agents"] ##state + action
+        offline_keys = th.randn(1000, input_shape)
+        offline_values = th.randn(1000, 1)
+        self.transformer = CrossAttention(input_shape,self.heads,input_shape,offline_keys=offline_keys,offline_values=offline_values)
+        ###
 
-    def insert_episode_batch(self, ep_batch):
+    def insert_episode_batch(self, ep_batch,recursive = False):
+        ## implement a transformer to retrieve the episode from the offline data
+        print(ep_batch)
+        if not recursive:
+            #TODO : using vault, load relevant data, using top-p sampling to retrieve the most relevant episodes.
+            pass
+        #####
         if self.buffer_index + ep_batch.batch_size <= self.buffer_size:
             self.update(ep_batch.data.transition_data,
                         slice(self.buffer_index, self.buffer_index + ep_batch.batch_size),
@@ -225,8 +244,8 @@ class ReplayBuffer(EpisodeBatch):
             assert self.buffer_index < self.buffer_size
         else:
             buffer_left = self.buffer_size - self.buffer_index
-            self.insert_episode_batch(ep_batch[0:buffer_left, :])
-            self.insert_episode_batch(ep_batch[buffer_left:, :])
+            self.insert_episode_batch(ep_batch[0:buffer_left, :],recursive = True)
+            self.insert_episode_batch(ep_batch[buffer_left:, :],recursive = True)
 
     def can_sample(self, batch_size):
         return self.episodes_in_buffer >= batch_size
