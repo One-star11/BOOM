@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+#should be able to handle episode data. 
+#episode data is (total_episode_size,timestep, feature_dim). where feature_dim = (state_dim + action_dim)
 
 class CrossAttention(nn.Module):
     def __init__(self, input_size, heads, embed_size, offline_keys=None, offline_values=None):
@@ -13,69 +15,51 @@ class CrossAttention(nn.Module):
         
         # offline parameters
         if offline_keys is not None and offline_values is not None:
-            data_length = offline_keys.size(0)
-            self.data_length = data_length
+            # offline_keys: (#episodes, state_action_dim)
+            # offline_values: (#episodes, reward_steps)
+            n_episodes = offline_keys.size(0)
+            self.n_episodes = n_episodes
             
-            # Pre-expand keys for heads: (heads, data_length, embed_size)
+            # Pre-expand keys for heads: (heads, n_episodes, embed_size)
             self.register_buffer('keys', 
-                offline_keys.view(1, data_length, embed_size).repeat(heads, 1, 1)
+                offline_keys.unsqueeze(0).repeat(heads, 1, 1)
             )
-            # Pre-expand values for heads: (heads, data_length, 1)
+            # Convert step-wise rewards to episode-wise absolute mean rewards: (n_episodes,)
             self.register_buffer('values',
-                offline_values.view(1, data_length, 1).repeat(heads, 1, 1)
+                offline_values.abs().mean(dim=-1)  # Take absolute mean across time steps
             )
         else:
             raise ValueError("Offline keys and values must be provided")
 
     def forward(self, x, curiosity_score=None):
-        b, t, hin = x.size()    # (batch_size, thread_length, input_size)
+        b, hin = x.size()    # (batch_size, input_size)
         assert hin == self.input_size, f'Input size {hin} should match {self.input_size}'
         
         h = self.heads
         e = self.emb_size
         
-        # Combine batch and thread: (b*t, h, e)
-        queries = self.toqueries(x).view(b*t, h, e)
+        # Transform to queries: (b, h, e)
+        queries = self.toqueries(x).view(b, h, e)
         queries = queries / (e ** (1/4))
 
-        # Reshape for bmm:
-        # queries: (b*t*h, 1, e)
-        # keys: (b*t*h, e, data_length)
-        queries = queries.view(b*t*h, 1, e)
-        keys = self.keys.unsqueeze(0).expand(b*t, -1, -1, -1)  # (b*t, h, data_length, e)
-        keys = keys.view(b*t*h, self.data_length, e).transpose(-2, -1)  # (b*t*h, e, data_length)
+        # Compute attention scores for each batch and head
+        # queries: (b, h, e), keys: (h, n_episodes, e)
+        # -> attention: (b, h, n_episodes)
+        dot = torch.matmul(queries, self.keys.transpose(-2, -1))
         
-        # Compute attention scores: (b*t*h, 1, data_length)
-        dot = torch.bmm(queries, keys)
+        # Add episode values to attention scores: (b, h, n_episodes)
+        dot = dot + self.values.view(1, 1, -1)
         
-        # Reshape back to (b*t, h, data_length)
-        dot = dot.view(b*t, h, self.data_length)
-        
-        # Apply softmax over data_length dimension: (b*t, h, data_length)
+        # Apply softmax over episodes dimension: (b, h, n_episodes)
         dot = F.softmax(dot, dim=-1)
         
-        # Values are in shape (h, data_length, 1)
-        # Expand values to (b*t, h, data_length, 1) - using expand for memory efficiency
-        values = self.values.unsqueeze(0).expand(b*t, -1, -1, -1)
-        ###TODO - implement curiosity score
         if curiosity_score is not None:
-            # Reshape curiosity score: (b*t, 1, 1), since its input is (b,t,1)
-            curiosity = curiosity_score.view(b*t, 1, 1)
-            # Expand curiosity to match values shape: (b*t, h, data_length, 1)
-            curiosity = curiosity.unsqueeze(1).expand(-1, h, self.data_length, -1)
-            values = values + curiosity
+            # curiosity_score: (b, score) -> (b, 1, 1)
+            curiosity = torch.exp(curiosity_score).view(b, 1, 1)
+            dot = dot * curiosity
+            dot = F.softmax(dot, dim=-1)  # Renormalize
         
-        # Reshape for final bmm:
-        # dot: (b*t*h, 1, data_length)
-        # values: (b*t*h, data_length, 1)
-        dot = dot.view(b*t*h, 1, self.data_length)
-        values = values.view(b*t*h, self.data_length, 1)
-        
-        # Compute attention: (b*t*h, 1, 1)
-        out = torch.bmm(dot, values)
-        
-        # Reshape and average across heads: (b, t, data_length)
-        out = out.view(b*t, h, 1).mean(dim=1)
-        out = out.view(b, t, 1)
+        # Average attention scores across heads: (b, n_episodes)
+        out = dot.mean(dim=1)
         
         return out

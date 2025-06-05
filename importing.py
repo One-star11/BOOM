@@ -14,11 +14,12 @@ def analyze_episode_lengths(vault, name):
     terminals = np.array(experience["terminals"])
     truncations = np.array(experience["truncations"])
     episode_ends = (terminals[0] > 0.5) | (truncations[0] > 0.5)
-    end_indices = np.where(episode_ends)[0]
+    end_indices = np.unique(np.where(episode_ends)[0])
+    print("end_indices",end_indices)
     
     # Calculate episode lengths
     episode_lengths = np.diff(np.concatenate([[0], end_indices]))
-    
+    print("episode_lengths",episode_lengths)
     print(f"Number of episodes: {len(episode_lengths)}")
     print(f"Mean length: {np.mean(episode_lengths):.2f}")
     print(f"Std length: {np.std(episode_lengths):.2f}")

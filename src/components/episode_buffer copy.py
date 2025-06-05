@@ -220,207 +220,170 @@ class ReplayBuffer(EpisodeBatch):
         self.env_info = env_info  # Store env_info
         self.n_agents = groups["agents"]  # Number of agents
         self.n_actions = scheme["avail_actions"]["vshape"][0]  # Number of possible actions
-        self.device = device
-        self.max_ep_len = 71
+        #TODO : load a pretrained transformer to search relevant episodes from the offline data
+        ###input_shape = full state + action, needs to be changed when using some more.
+        max_ep_len = 71
 
-        # Load data from all three vaults
-        self.vlt_good = Vault(rel_dir = "vaults", vault_name = "5m_vs_6m.vlt", vault_uid = "Good")
-        self.vlt_medium = Vault(rel_dir = "vaults", vault_name = "5m_vs_6m.vlt", vault_uid = "Medium")
-        self.vlt_poor = Vault(rel_dir = "vaults", vault_name = "5m_vs_6m.vlt", vault_uid = "Poor")
         
-        # Store episode metadata and prepare transformer features
-        self.offline_features = []  # List to store episode features
-        self.offline_values = []    # List to store episode values (rewards)
-        self.episode_metadata = []  # List to store episode metadata for later retrieval
-
-        # Store experiences in memory to avoid repeated reads
-        self.experiences = {
-            "good": self.vlt_good.read().experience,
-            "medium": self.vlt_medium.read().experience,
-            "poor": self.vlt_poor.read().experience
-        }
+        # Load data from all three vaults
+        self.vlt_good = Vault(rel_dir = "vaults", vault_name = "5m_vs_6m.vlt", vault_uid = "Good") #996727
+        self.vlt_medium = Vault(rel_dir = "vaults", vault_name = "5m_vs_6m.vlt", vault_uid = "Medium") #996856
+        self.vlt_poor = Vault(rel_dir = "vaults", vault_name = "5m_vs_6m.vlt", vault_uid = "Poor") #934505
+        
+        # Process vault data into episodes
+        self.offline_episodes = []  # List to store processed episodes
         
         def process_vault_data(vault, vault_type):
             print(f"Processing {vault_type} vault...")
-            experience = self.experiences[vault_type]
+            experience = vault.read().experience
             
-            # Convert only essential data to torch tensors directly
-            terminals = th.from_numpy(np.array(experience["terminals"][0]))
-            truncations = th.from_numpy(np.array(experience["truncations"][0]))
-            states = th.from_numpy(np.array(experience["infos"]["state"][0]))
-            actions = th.from_numpy(np.array(experience["actions"][0]))
-            rewards = th.from_numpy(np.array(experience["rewards"][0]))
+            # Convert JAX arrays to numpy
+            terminals = np.array(experience["terminals"][0])
+            truncations = np.array(experience["truncations"][0])
+            states = np.array(experience["infos"]["state"][0])
+            actions = np.array(experience["actions"][0])
+            rewards = np.array(experience["rewards"][0])
+            obs = np.array(experience["observations"][0])
+            legals = np.array(experience["infos"]["legals"][0])
             
             # Find episode boundaries
             episode_ends = (terminals > 0.5) | (truncations > 0.5)
-            end_indices = th.unique(th.where(episode_ends)[0])
+            end_indices = np.where(episode_ends)[0]
             
             # Process each episode
             episode_start = 0
+            
             for ep_idx, episode_end in enumerate(end_indices):
                 episode_length = episode_end - episode_start + 1
                 
-                # Store episode metadata for later retrieval
-                self.episode_metadata.append({
+                # Initialize obs_all and action_all for this episode with max_ep_len
+                # Shape: [max_ep_len, n_agents, MT_traj_length, dim]
+                obs_all = np.zeros((max_ep_len, self.n_agents, self.args.MT_traj_length, self.args.input_shape), dtype=np.float32)
+                action_all = np.zeros((max_ep_len, self.n_agents, self.args.MT_traj_length, 1), dtype=np.float32)
+                
+                # Set agent IDs in obs_all if needed
+                if self.args.obs_agent_id:
+                    if self.args.obs_last_action:
+                        # Agent ID after obs and last action
+                        for idx in range(self.n_agents):
+                            obs_all[:, idx, :, self.env_info["obs_shape"] + self.env_info["n_actions"] + idx] = 1
+                    else:
+                        # Agent ID after obs
+                        for idx in range(self.n_agents):
+                            obs_all[:, idx, :, self.env_info["obs_shape"] + idx] = 1
+                
+                # Fill in the observations and actions for each timestep
+                for t in range(episode_length):
+                    # For each timestep, shift the window and add new data
+                    if t > 0:
+                        obs_all[t, :, :self.args.MT_traj_length-1] = obs_all[t-1, :, 1:]
+                        action_all[t, :, :self.args.MT_traj_length-1] = action_all[t-1, :, 1:]
+                    
+                    # Add new observation
+                    obs_all[t, :, -1, :self.env_info["obs_shape"]] = obs[episode_start + t]
+                    
+                    # Add last action to observation if needed
+                    if self.args.obs_last_action and t > 0:
+                        for agent_id in range(self.n_agents):
+                            obs_all[t, agent_id, -1, self.env_info["obs_shape"] + int(actions[episode_start + t - 1, agent_id])] = 1
+                    
+                    # Add new action
+                    if t < episode_length:
+                        action_all[t, :, -1, 0] = actions[episode_start + t].reshape(-1)
+                
+                # Create episode data structure
+                episode = {
+                    'state': th.from_numpy(states[episode_start:episode_end+1]),
+                    'obs': th.from_numpy(obs[episode_start:episode_end+1]),
+                    'actions': th.from_numpy(actions[episode_start:episode_end+1]),
+                    'avail_actions': th.from_numpy(legals[episode_start:episode_end+1]),
+                    'reward': th.from_numpy(rewards[episode_start:episode_end+1])[:,0:1],
+                    'terminated': th.from_numpy(episode_ends[episode_start:episode_end+1])[:,0:1],
+                    'filled': th.ones(episode_length, dtype=th.long),
+                    'length': episode_length,
                     'vault_type': vault_type,
-                    'vault': vault,
-                    'start_idx': episode_start,
-                    'end_idx': episode_end,
-                    'length': episode_length
-                })
+                    'episode_idx': ep_idx,
+                    'probs': th.zeros((episode_length, self.n_agents, self.env_info["n_actions"]), dtype=th.float),
+                    'action_all': th.from_numpy(action_all),  # Shape: [max_ep_len, n_agents, MT_traj_length, 1]
+                    'obs_all': th.from_numpy(obs_all)  # Shape: [max_ep_len, n_agents, MT_traj_length, input_shape]
+                }
                 
-                # Get episode data
-                episode_states = states[episode_start:episode_end+1]
-                episode_actions = actions[episode_start:episode_end+1]
-                episode_rewards = rewards[episode_start:episode_end+1, 0:1]
+                # Add to episodes list
+                self.offline_episodes.append(episode)
                 
-                # Create feature vector for transformer
-                states_actions = th.cat([
-                    episode_states.reshape(episode_length, -1),
-                    episode_actions.reshape(episode_length, -1)
-                ], dim=-1)
-                
-                # Pad if necessary
-                if episode_length < self.max_ep_len:
-                    pad_length = self.max_ep_len - episode_length
-                    # Pad in the timestep dimension (first dimension)
-                    states_actions = th.cat([
-                        states_actions,
-                        th.zeros(pad_length, states_actions.size(-1), dtype=states_actions.dtype)
-                    ], dim=0)
-                    episode_rewards = th.cat([
-                        episode_rewards,
-                        th.zeros(pad_length, episode_rewards.size(-1), dtype=episode_rewards.dtype)
-                    ], dim=0)
-                
-                # Store features and values for transformer
-                self.offline_features.append(states_actions.flatten())
-                self.offline_values.append(episode_rewards.flatten())
-                
+                # Update start for next episode
                 episode_start = episode_end + 1
             
             print(f"Processed {len(end_indices)} episodes from {vault_type} vault")
         
         # Process all vaults
-        process_vault_data("good", "good")
-        process_vault_data("medium", "medium")
-        process_vault_data("poor", "poor")
+        process_vault_data(self.vlt_good, "good")
+        process_vault_data(self.vlt_medium, "medium")
+        process_vault_data(self.vlt_poor, "poor")
+        
+        # Pad all episodes to max length
+        for episode in self.offline_episodes:
+            ep_len = episode['length']
+            if ep_len < max_ep_len:
+                padding_len = max_ep_len - ep_len
+                # Pad each field
+                episode['state'] = th.cat([episode['state'], 
+                    th.zeros(padding_len, *episode['state'].shape[1:], dtype=episode['state'].dtype)], dim=0)
+                episode['obs'] = th.cat([episode['obs'], 
+                    th.zeros(padding_len, *episode['obs'].shape[1:], dtype=episode['obs'].dtype)], dim=0)
+                episode['actions'] = th.cat([episode['actions'], 
+                    th.zeros(padding_len, *episode['actions'].shape[1:], dtype=episode['actions'].dtype)], dim=0)
+                episode['avail_actions'] = th.cat([episode['avail_actions'], 
+                    th.zeros(padding_len, *episode['avail_actions'].shape[1:], dtype=episode['avail_actions'].dtype)], dim=0)
+                episode['reward'] = th.cat([episode['reward'], 
+                    th.zeros(padding_len, *episode['reward'].shape[1:], dtype=episode['reward'].dtype)], dim=0)
+                episode['reward'] = episode['reward'][:,0:1]
+                episode['terminated'] = th.cat([episode['terminated'], 
+                    th.zeros(padding_len, *episode['terminated'].shape[1:], dtype=th.bool)], dim=0)
+                episode['terminated'] = episode['terminated'][:,0:1]
+                episode['probs'] = th.cat([episode['probs'],
+                    th.zeros(padding_len, *episode['probs'].shape[1:], dtype=th.float)], dim=0)
+                # Pad filled with zeros to mark padded timesteps
+                episode['filled'] = th.cat([episode['filled'],
+                    th.zeros(padding_len, dtype=th.long)], dim=0)
+        
+        # Prepare input features for transformer
+        self.offline_features = []  # List to store episode features
+        self.offline_values = []    # List to store episode values (rewards)
+        
+        for episode in self.offline_episodes:
 
+            #states_actions should be (state....,action....)
+            states_actions = th.cat([
+                episode['state'],  # Use full padded sequence
+                episode['actions']  # Reshape actions to 2D and use full sequence
+            ], dim=-1)
+            
+            # flatten the full padded episode data - make it (max_ep_len * (state_dim + action_dim),)
+            states_actions = states_actions.flatten(start_dim=0, end_dim=1)
+            self.offline_features.append(states_actions)
+            
+            # Use full reward sequence as value
+            self.offline_values.append(episode['reward'])
         
-        # Stack features and values
-        self.offline_features = th.stack(self.offline_features)
-        self.offline_values = th.stack(self.offline_values)
+        # Stack all features and values
+        self.offline_features = th.stack(self.offline_features)  # shape: [n_episodes, max_ep_len * (state_dim + action_dim)]
+        self.offline_values = th.stack(self.offline_values)      # shape: [n_episodes, max_ep_len]
         
-        print(f"offline_features shape: {self.offline_features.shape}")
-        print(f"offline_values shape: {self.offline_values.shape}")
+        print(f"Offline features shape: {self.offline_features.shape}")
+        print(f"Offline values shape: {self.offline_values.squeeze(-1).shape}")
         
         # Create the transformer with the prepared data
         self.transformer = CrossAttention(
-            self.offline_features.shape[1],
+            self.offline_features.shape[1],  # Input dimension is flattened full episode length
             self.heads,
             self.offline_features.shape[1],
             offline_keys=self.offline_features,
-            offline_values=self.offline_values
+            offline_values=self.offline_values.squeeze(-1)  #squeeze the last dimension
         )
         if device != "cpu":
             self.transformer = self.transformer.to(device)
-
-    def _load_full_episode(self, episode_meta):
-        """Load full episode data from vault when needed."""
-        vault = episode_meta['vault']
-        start_idx = episode_meta['start_idx']
-        end_idx = episode_meta['end_idx']
-        episode_length = episode_meta['length']
-        
-        # Read vault data for this episode
-        experience = self.experiences[episode_meta['vault_type']]
-        
-        # Initialize obs_all and action_all for this episode
-        obs_all = th.zeros((self.max_ep_len, self.n_agents, self.args.MT_traj_length, self.args.input_shape), dtype=th.float32)
-        action_all = th.zeros((self.max_ep_len, self.n_agents, self.args.MT_traj_length, 1), dtype=th.float32)
-        
-        # Get episode data directly as torch tensors
-        obs = th.from_numpy(np.array(experience["observations"][0]))[start_idx:end_idx+1]
-        actions = th.from_numpy(np.array(experience["actions"][0]))[start_idx:end_idx+1]
-        
-        # Set agent IDs in obs_all if needed
-        if self.args.obs_agent_id:
-            if self.args.obs_last_action:
-                # Agent ID after obs and last action
-                for idx in range(self.n_agents):
-                    obs_all[:, idx, :, self.env_info["obs_shape"] + self.env_info["n_actions"] + idx] = 1
-            else:
-                # Agent ID after obs
-                for idx in range(self.n_agents):
-                    obs_all[:, idx, :, self.env_info["obs_shape"] + idx] = 1
-        
-        # Fill in the observations and actions for each timestep
-        for t in range(episode_length):
-            # For each timestep, shift the window and add new data
-            if t > 0:
-                obs_all[t, :, :self.args.MT_traj_length-1] = obs_all[t-1, :, 1:]
-                action_all[t, :, :self.args.MT_traj_length-1] = action_all[t-1, :, 1:]
-            
-            # Add new observation
-            obs_all[t, :, -1, :self.env_info["obs_shape"]] = obs[t]
-            
-            # Add last action to observation if needed
-            if self.args.obs_last_action and t > 0:
-                for agent_id in range(self.n_agents):
-                    obs_all[t, agent_id, -1, self.env_info["obs_shape"] + int(actions[t - 1, agent_id])] = 1
-            
-            # Add new action
-            if t < episode_length:
-                action_all[t, :, -1, 0] = actions[t].reshape(-1)
-        
-        # Create episode dictionary with full data
-        episode = {
-            'state': th.from_numpy(np.array(experience["infos"]["state"][0]))[start_idx:end_idx+1],
-            'obs': obs,
-            'actions': actions,
-            'avail_actions': th.from_numpy(np.array(experience["infos"]["legals"][0]))[start_idx:end_idx+1],
-            'reward': th.from_numpy(np.array(experience["rewards"][0]))[start_idx:end_idx+1,0:1],
-            'terminated': th.from_numpy(np.array(experience["terminals"][0]))[start_idx:end_idx+1,0:1],
-            'length': episode_length,
-            'vault_type': episode_meta['vault_type'],
-            'probs': th.zeros((episode_length, self.n_agents, self.env_info["n_actions"]), dtype=th.float),
-            'obs_all': obs_all,
-            'action_all': action_all
-        }
-        
-        # Pad episode to max_ep_len if needed
-        if episode_length < self.max_ep_len:
-            padding_len = self.max_ep_len - episode_length
-            for key in ['state', 'obs', 'actions', 'avail_actions', 'reward', 'terminated', 'probs']:
-                if key in episode:
-                    shape = list(episode[key].shape)
-                    shape[0] = padding_len
-                    padding = th.zeros(shape, dtype=episode[key].dtype)
-                    episode[key] = th.cat([episode[key], padding], dim=0)
-        
-        return episode
-
-    def _get_episode_attention(self, states, actions, max_time):
-        """Get attention scores for a full episode."""
-        batch_size = states.shape[0] if len(states.shape) > 2 else 1
-        if len(states.shape) == 2:
-            states = states.unsqueeze(0)
-            actions = actions.unsqueeze(0)
-            
-        # Create feature vector for transformer exactly as in __init__
-        states_actions = th.cat([
-            states.reshape(batch_size, max_time, -1),
-            actions.reshape(batch_size, max_time, -1)
-        ], dim=-1)
-        
-        # Flatten for transformer input
-        states_actions = states_actions.reshape(batch_size, -1)
-        
-        # Move to device
-        states_actions = states_actions.to(self.device)
-        
-        # Get attention scores - returns (batch_size, n_episodes)
-        return self.transformer(states_actions)  # Keep (batch, n_episodes) shape for top-k selection
+        ###
 
     def _create_expanded_batch(self, ep_batch, k):
         """Create a new batch with space for original and retrieved episodes.
@@ -443,10 +406,10 @@ class ReplayBuffer(EpisodeBatch):
         
         # Initialize expanded batch with same structure as original
         for key in ep_batch.data.transition_data.keys():
-            if key != 'filled':
-                shape = list(ep_batch.data.transition_data[key].shape)
-                shape[0] *= (k + 1)  # Multiply batch dimension by k+1
-                expanded_batch['transition_data'][key] = th.zeros(shape, 
+            shape = list(ep_batch.data.transition_data[key].shape)
+            shape[0] *= (k + 1)  # Multiply batch dimension by k+1
+            # Only retrieved episodes should be truncated to chunk_size, original episodes keep full length
+            expanded_batch['transition_data'][key] = th.zeros(shape, 
                 dtype=ep_batch.data.transition_data[key].dtype,
                 device=ep_batch.data.transition_data[key].device)
         
@@ -460,103 +423,95 @@ class ReplayBuffer(EpisodeBatch):
         # Place original episodes at indices 0, k+1, 2(k+1), ...
         stride = k + 1  # Distance between original episodes in expanded batch
         for key in ep_batch.data.transition_data.keys():
-            if key != 'filled':
-                expanded_batch['transition_data'][key][::stride] = ep_batch.data.transition_data[key]
+            expanded_batch['transition_data'][key][::stride] = ep_batch.data.transition_data[key]
         
         for key in ep_batch.data.episode_data.keys():
             expanded_batch['episode_data'][key][::stride] = ep_batch.data.episode_data[key]
             
         return expanded_batch
 
+    def _get_episode_attention(self, states, actions, max_time):
+        """Get attention scores for a full episode."""
+        # Interleave states and actions: state1-action1-state2-action2-...
+        batch_size = states.shape[0] if len(states.shape) > 2 else 1
+        if len(states.shape) == 2:
+            states = states.unsqueeze(0)
+            actions = actions.unsqueeze(0)
+            
+        # Reshape actions if needed (in case they're [batch, time, n_agents, 1])
+        if len(actions.shape) == 4:
+            actions = actions.squeeze(-1)  # Remove last dimension if it's 1
+            
+        # Flatten actions across agent dimension
+        actions_flat = actions.reshape(batch_size, max_time, -1)
+        
+        # Create interleaved sequence
+        seq_len = max_time
+        interleaved = []
+        for t in range(seq_len):
+            interleaved.append(states[:, t])
+            interleaved.append(actions_flat[:, t])
+        
+        # Stack and flatten
+        states_actions = th.cat(interleaved, dim=-1)  # shape: [batch, (state_dim + action_dim) * max_time]
+        
+        # Move to device
+        states_actions = states_actions.to(self.device)
+        
+        # Get attention scores
+        attention_scores = self.transformer(states_actions)  # (batch, 1, 1)
+        return attention_scores.squeeze(), 1  # Remove extra dimensions
+
     def _retrieve_similar_episodes(self, ep_batch, k=3):
         """Retrieve k most similar episodes for each episode in batch."""
         # Create expanded batch
-        # print("ep_batch.batch_size", ep_batch.batch_size)
         expanded_batch = self._create_expanded_batch(ep_batch, k)
         
         # Get state and action data from the episode batch
-        states = ep_batch["state"]   # shape: (batch, time, state_dim)
-        actions = ep_batch["actions"]  # shape: (batch, time, action_dim)
-        max_time = states.shape[1]
+        states = ep_batch["state"]  # shape: (batch, time, state_dim)
+        actions = ep_batch["actions"]  # shape: (batch, time, n_agents, 1)
+        max_time = states.shape[1]  # Use full padded length
         
-        # Compute attention scores for the whole batch at once
-        attention_scores = self._get_episode_attention(states, actions, max_time)  # shape: (batch, n_episodes)
-        _, top_k_indices = th.topk(attention_scores, k=k)  # shape: (batch, k)
-
-        # Create a new scheme without 'filled' key for the new batch
-        new_scheme = {k: v for k, v in ep_batch.scheme.items() if k != 'filled'}
-
-        # Prepare raw data dicts for update
-        transition_data = {}
-        episode_data = {}
-        
-        # Initialize transition_data with zeros for all keys except 'filled'
-        for key in ep_batch.data.transition_data.keys():
-            if key != 'filled':
-                shape = list(expanded_batch['transition_data'][key].shape)
-                transition_data[key] = th.zeros(shape, 
-                    dtype=ep_batch.data.transition_data[key].dtype,
-                    device=ep_batch.data.transition_data[key].device)
-        
-        # Initialize episode_data
-        for key in ep_batch.data.episode_data.keys():
-            shape = list(expanded_batch['episode_data'][key].shape)
-            episode_data[key] = th.zeros(shape,
-                dtype=ep_batch.data.episode_data[key].dtype,
-                device=ep_batch.data.episode_data[key].device)
-
-        # Copy original episodes to their positions
-        stride = k + 1
-        for key in transition_data.keys():
-            transition_data[key][::stride] = ep_batch.data.transition_data[key]
-        for key in episode_data.keys():
-            episode_data[key][::stride] = ep_batch.data.episode_data[key]
-
-        # Group episodes by vault type to minimize vault reads
-        vault_episodes = {}
+        # Process each episode in the batch
         for b in range(ep_batch.batch_size):
-            for i, top_idx in enumerate(top_k_indices[b]):
-                episode_meta = self.episode_metadata[top_idx.item()]
-                vault_type = episode_meta['vault_type']
-                if vault_type not in vault_episodes:
-                    vault_episodes[vault_type] = []
-                vault_episodes[vault_type].append((b, i, top_idx.item()))
-
-        # Load episodes by vault type
-        for vault_type, episodes in vault_episodes.items():
-            # Get all unique episode indices for this vault
-            unique_indices = list(set(idx for _, _, idx in episodes))
+            episode_states = states[b]  # (time, state_dim)
+            episode_actions = actions[b]  # (time, n_agents, 1)
             
-            # Load all episodes for this vault at once
-            loaded_episodes = {}
-            for idx in unique_indices:
-                loaded_episodes[idx] = self._load_full_episode(self.episode_metadata[idx])
+            # Get attention score for the full padded episode
+            attention_scores, _ = self._get_episode_attention(
+                episode_states, 
+                episode_actions, 
+                max_time
+            )
             
-            # Update the expanded batch with loaded episodes
-            for b, i, idx in episodes:
-                expanded_idx = b * (k + 1) + i + 1
-                episode = loaded_episodes[idx]
-                print(f"Episode {b}, Retrieved episode {idx} from {episode['vault_type']} vault")
+            # Get top-k indices from the offline data
+            _, top_k_indices = th.topk(attention_scores, k=k)
+            
+            # Copy retrieved episodes from vault data to expanded batch
+            for i, top_idx in enumerate(top_k_indices):
+                expanded_idx = b * (k + 1) + i + 1  # Original episode at b*(k+1), retrieved episodes follow
+                episode = self.offline_episodes[top_idx]
                 
-                # Update transition data
-                for key in transition_data.keys():
-                    if key in episode:
-                        transition_data[key][expanded_idx] = episode[key].view(*transition_data[key][expanded_idx].shape)
-
-        # Create new EpisodeBatch with the modified scheme
-        new_ep_batch = EpisodeBatch(
-            scheme=new_scheme,
+                print(f"Episode {b}, Retrieved episode {top_idx} from {episode['vault_type']} vault, original length {episode['length']}")
+                
+                # Copy data to expanded batch
+                for key in ep_batch.data.transition_data.keys():
+                    print(f"Transition data key: {key}, shape: {expanded_batch['transition_data'][key][expanded_idx].shape}, episode {key} shape: {episode[key].shape}")
+                    expanded_batch['transition_data'][key][expanded_idx] = episode[key].view(*expanded_batch['transition_data'][key][expanded_idx].shape)
+                
+                # Episode data remains the same as we don't have episode-level data
+                for key in ep_batch.data.episode_data.keys():
+                    expanded_batch['episode_data'][key][expanded_idx] = ep_batch.data.episode_data[key][b]
+        
+        # Create new episode batch with expanded data
+        return EpisodeBatch(
+            scheme=ep_batch.scheme,
             groups=ep_batch.groups,
             batch_size=ep_batch.batch_size * (k + 1),
             max_seq_length=ep_batch.max_seq_length,
-            device=ep_batch.device,
-            preprocess=ep_batch.preprocess
+            data=SN(**expanded_batch),
+            device=ep_batch.device
         )
-
-        # Update the new batch with our prepared data
-        new_ep_batch.update(transition_data)
-        new_ep_batch.update(episode_data)
-        return new_ep_batch
 
     def insert_episode_batch(self, ep_batch, recursive=False):
         """Insert episode batch into buffer with similar episode retrieval."""
