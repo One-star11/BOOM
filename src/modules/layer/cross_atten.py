@@ -75,6 +75,9 @@ class CrossAttention(nn.Module):
         
         b, hin = x.size()    # (batch_size, input_size)
         
+        assert hin == self.input_size, \
+                f"Input shape mismatch: expected {self.input_size}, got {hin}"
+
         h = self.heads
         e = self.emb_size
         
