@@ -213,8 +213,13 @@ def run_sequential(args, logger,group_name):
     ##################################################################
     ######################### MT PRETRAINING #########################
     ##################################################################
-        
-    if args.use_MT_mode :
+    
+    
+    # Load pretrained MT parameters
+    pretrained_MT_path = args.pretrained_MT_path
+    if args.use_MT_mode and pretrained_MT_path:
+        learner.load_MT(pretrained_MT_path)
+
         cnt = 0
         cnt2= 0 
         n_repeat = args.MT_train_n_repeat
@@ -342,12 +347,16 @@ def run_sequential(args, logger,group_name):
             # use appropriate filenames to do critics, optimizer states
             learner.save_models(save_path)
 
-        if save_mae_param % 10 == 0 and args.save_MT :
+        if save_mae_param % 100 == 0 and args.save_MT :
             filename = 'results/params/{}_FineTuning_{}.pt'.format(group_name,save_mae_param)
             learner.save_MT(filename=filename)
         save_mae_param+=1
 
         episode += args.batch_size_run
+    
+        if args.save_replay and (episode / args.batch_size_run)%100 == 0:
+            logger.console_logger.info(f"Episode {episode}: saving replay")
+            runner.save_replay
 
         if (runner.t_env - last_log_T) >= args.log_interval:
             logger.log_stat("episode", episode, runner.t_env)

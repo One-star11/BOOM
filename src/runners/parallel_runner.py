@@ -58,6 +58,12 @@ class ParallelRunner:
         return self.env_info
 
     def save_replay(self):
+        for parent_conn in self.parent_conns:
+            parent_conn.send(("save_replay", None))
+        for parent_conn in self.parent_conns:
+            _ = parent_conn.recv()        
+
+    def save_replay(self):
         pass
 
     def close_env(self):
@@ -301,7 +307,11 @@ def env_worker(remote, env_fn):
         elif cmd == "get_env_info":
             remote.send(env.get_env_info())
         elif cmd == "get_stats":
-            remote.send(env.get_stats())
+            remote.send(env.get_stats())        
+        elif cmd =="save_replay":
+            env.save_replay()
+            remote.send(None)
+            # print("replay saved")
         else:
             raise NotImplementedError
 

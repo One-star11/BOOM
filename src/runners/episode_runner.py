@@ -15,6 +15,8 @@ class EpisodeRunner:
         self.env = env_REGISTRY[self.args.env](**self.args.env_args)
         self.episode_limit = self.env.episode_limit
         self.t = 0
+        self.time_ptr = 0
+        self.epoch = 0
 
         self.t_env = 0
 
@@ -25,6 +27,13 @@ class EpisodeRunner:
 
         # Log the first run
         self.log_train_stats_t = -1000000
+        
+        self.offline_data = np.load("/home/sihyun/marl/vaults/5m_vs_6m_Poor.npz")
+        self.states = self.offline_data["states"] # (996727, 98)
+        self.actions = self.offline_data["actions"] # (996727, 5)
+        self.rewards = self.offline_data["rewards"][0] # (996737, 5)
+        self.observations = self.offline_data["observations"] # (996727, 5, 55)
+        self.terminals = self.offline_data["terminals"][0]
 
     def setup(self, scheme, groups, preprocess, mac):
         self.new_batch = partial(EpisodeBatch, scheme, groups, self.batch_size, self.episode_limit + 1,
@@ -120,6 +129,43 @@ class EpisodeRunner:
             if hasattr(self.mac.action_selector, "epsilon"):
                 self.logger.log_stat("epsilon", self.mac.action_selector.epsilon, self.t_env)
             self.log_train_stats_t = self.t_env
+
+        return self.batch
+    
+    def run_offline(self, test_mode=False, MT_train_mode=True):
+        self.reset()
+
+        if self.time_ptr >= 934400 and self.epoch <= 4:
+            self.epoch += 1
+            self.time_ptr = 0
+            print(f"-------------------epoch : {self.epoch}------------------------")
+
+        self.mac.init_hidden(batch_size=self.batch_size)
+
+        states_list, obs_list, actions_list, rewards_list, terms_list = [], [], [], [], []
+
+        start_idx = self.time_ptr + 1
+        end_idx = np.where(self.terminals[start_idx:])[0][0] + start_idx
+        # print(f"terminals : {terminals[start_idx:end_idx+1]}")
+        # print(f"start_idx : {start_idx}, end_idx : {end_idx}")
+
+        for idx in range(start_idx, end_idx + 1):
+            states_list.append(self.states[idx])
+            obs_list.append(self.observations[idx])
+            actions_list.append(self.actions[idx])
+            rewards_list.append((self.rewards[idx],))
+            terms_list.append((self.terminals[idx],))
+            self.time_ptr = idx + 1  
+
+        self.batch.update({
+            "state": states_list,
+            "obs": obs_list,
+            "actions": actions_list,
+            "reward": rewards_list,
+            "terminated": terms_list
+        }, ts=slice(0, len(states_list)))
+
+        print(f"t = {idx}")
 
         return self.batch
 

@@ -11,14 +11,17 @@ MT_norm : 12
 MT_n_heads : 4
 MT_n_enc_layer : 3
 MT_n_dec_layer : 2
-use_MT_mode : False ####
+use_MT_mode : True ####
 MT_max_pretraining_episode : 100
 MT_fine_tune_per_step : 500
 MT_fine_tune_total : 300
 MT_train_n_repeat : 10
 MT_pretrain_threshold : 0.015
 MT_finetune : True
-save_MT : False
+save_MT : True
+pretrained_MT_path: "results/params/Good_6_8/_Pretraining_65232.pt"
+# pretrained_MT_path: "results/params/Medium/_Pretraining_81232.pt” 
+# pretrained_MT_path: “results/params/Poor_6_8/_Pretraining_54432.pt”
 
 # --- pymarl options ---
 runner: "episode" # Runs 1 env for an episode
@@ -40,13 +43,13 @@ buffer_cpu_only: True # If true we won't keep all of the replay buffer in vram
 use_wandb : False
 project_name : "pymarl2"
 wandb_group_info : "pymarl2"
-use_tensorboard: False # Log results to tensorboard
-save_model: False # Save the models to disk
+use_tensorboard: True # Log results to tensorboard
+save_model: True # Save the models to disk
 save_model_interval: 1000000 # Save models after this many timesteps
 checkpoint_path: "" # Load a checkpoint from this path
 evaluate: False # Evaluate model for test_nepisode episodes and quit (no training)
 load_step: 0 # Load model trained on this many timesteps (0 if choose max possible)
-save_replay: False # Saving the replay of the model loaded from checkpoint_path
+save_replay: True # Saving the replay of the model loaded from checkpoint_path
 local_results_path: "results" # Path for local results
 
 # --- RL hyperparameters ---
