@@ -135,7 +135,7 @@ class EpisodeRunner:
     def run_offline(self, test_mode=False, MT_train_mode=True):
         self.reset()
 
-        if self.time_ptr >= 934400 and self.epoch <= 4:
+        if self.time_ptr >= 600000 and self.epoch <= 4:
             self.epoch += 1
             self.time_ptr = 0
             print(f"-------------------epoch : {self.epoch}------------------------")
