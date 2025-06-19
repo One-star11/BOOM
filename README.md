@@ -3,10 +3,7 @@
 <a href="#citation
 "><img src="./assets/Figure_DS.png"></a>
 
-<div style="display: flex; justify-content: center; gap: 20px;">
-  <img src="./assets/figure2.jpg" alt="" width="48%">
-  <img src="./assets/figure3.jpg" alt="" width="48%">
-</div>
+
 
 ## 🎯 Description 
 This is a code repository for The Final Project in SNU RL for Data Science.
