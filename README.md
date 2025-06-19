@@ -15,7 +15,7 @@ For detailed information, refere to the installation instructions of [pymarl2](h
 
 1️⃣ Cloning MA<sup>2</sup>E 
 
-`git clone https://github.com/One-star11/MA2E.git`
+`[git clone https://github.com/One-star11/MA2E.git](https://github.com/One-star11/BOOM.git)`
 
 2️⃣ Donwload and setup StarCraftII 
 
