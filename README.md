@@ -1,7 +1,7 @@
 # BOOM : Bridging Offline Data to Online Learning in Multi-Agent Reinforcement Learning with Self-Supervised Pretraining
 
 <a href="#citation
-"><img src="https://img.shields.io/badge/Paper-BibTex-yellow"></a>
+"><img src="./assets/Figure_DS.png"></a>
 
 <div style="display: flex; justify-content: center; gap: 20px;">
   <img src="./assets/figure2.jpg" alt="" width="48%">
