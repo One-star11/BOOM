@@ -13,18 +13,19 @@ This is a code repository for The Final Project in SNU RL for Data Science.
 The code is based on pymarl2. 
 For detailed information, refere to the installation instructions of [pymarl2](https://github.com/hijkzzz/pymarl2) and [SMAC](https://github.com/oxwhirl/smac).
 
-1️⃣ Cloning BOOM
+[1] Cloning BOOM
 
 `git clone https://github.com/One-star11/BOOM.git`
 
-2️⃣ Donwload and setup StarCraftII 
+[2] Donwload and setup StarCraftII 
 
 `bash install_sc2.sh`
 
-3️⃣ Install required packages 
+[3] Install required packages 
 
 `pip install -r requirements.txt`
 
+[4] Download offline dataset
 ```
 wget https://huggingface.co/datasets/InstaDeepAI/og-marl/resolve/main/core/smac_v1/5m_vs_6m.zip --show-progress
 
