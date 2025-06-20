@@ -13,9 +13,9 @@ This is a code repository for The Final Project in SNU RL for Data Science.
 The code is based on pymarl2. 
 For detailed information, refere to the installation instructions of [pymarl2](https://github.com/hijkzzz/pymarl2) and [SMAC](https://github.com/oxwhirl/smac).
 
-1️⃣ Cloning MA<sup>2</sup>E 
+1️⃣ Cloning BOOM
 
-`git clone https://github.com/One-star11/MA2E.git`
+`git clone https://github.com/One-star11/BOOM.git`
 
 2️⃣ Donwload and setup StarCraftII 
 
@@ -24,6 +24,16 @@ For detailed information, refere to the installation instructions of [pymarl2](h
 3️⃣ Install required packages 
 
 `pip install -r requirements.txt`
+
+```
+wget https://huggingface.co/datasets/InstaDeepAI/og-marl/resolve/main/core/smac_v1/5m_vs_6m.zip --show-progress
+
+unzip 3m.zip -d vaults
+
+pip install flashbax~=0.1.2
+````
+
+running the code requires about ~40GB of RAM, and ~8GB of VRAM
 
 
 ## 🎮 Running Script
@@ -34,8 +44,6 @@ For detailed information, refere to the installation instructions of [pymarl2](h
 
 ✔️ Example 
 
-`bash run.sh qmix sc2 3s_vs_5z use_MT=True 3 0 3`
-
-* Run QMIX+MA2E in SMAC 3s_vs_5z scenario
+`bash run.sh qmix sc2 5m_vs_6m use_MT=True 1 0 1`
   
 * `use_MT` means executing the model plugs in MA2E into the baseline algorithm. 
